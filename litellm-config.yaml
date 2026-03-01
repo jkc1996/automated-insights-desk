@@ -1,0 +1,29 @@
+model_list:
+  - model_name: gpt-4.0
+    litellm_params:
+      model: openai/gpt-4.0
+      api_key: os.environ/OPENAI_API_KEY
+      rpm: 12
+  - model_name: gpt-4.1
+    litellm_params:
+      model: openai/gpt-4.1
+      api_key: os.environ/OPENAI_API_KEY
+      rpm: 12
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: openai/gpt-3.5-turbo
+      api_key: os.environ/OPENAI_API_KEY
+      rpm: 6
+  - model_name: gpt-3.5-turbo-instruct
+    litellm_params:
+      model: text-completion-openai/gpt-3.5-turbo-instruct
+      api_key: os.environ/OPENAI_API_KEY
+      rpm: 6
+      
+litellm_settings:
+  drop_params: True
+  success_callback: ["langfuse"]
+  ssl_verify: false
+
+general_settings: 
+  master_key: sk-1234

@@ -1,0 +1,44 @@
+version: '3.8'
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm-proxy
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml
+      - C:\Users\jaykumarc\Downloads\combined_cert.pem:/app/combined_cert.pem:ro
+    env_file:
+      - .env
+    environment:
+      - LITELLM_MASTER_KEY=sk-1234
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/litellmdb
+      - REQUESTS_CA_BUNDLE=/app/combined_cert.pem
+      - SSL_CERT_FILE=/app/combined_cert.pem
+    depends_on:
+      - postgres
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--detailed_debug"]
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    ports: 
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: litellmdb
+    volumes:
+      - litellm_postgres_data:/var/lib/postgresql/data
+
+  redis-stack:
+    image: redis/redis-stack-server:latest
+    container_name: redis-langgraph
+    ports:
+      - "6379:6379" # Standard Redis port
+    volumes:
+      - redis_data:/data
+
+volumes:
+  litellm_postgres_data:
+  redis_data:

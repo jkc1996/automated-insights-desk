@@ -1,0 +1,24 @@
+# Core LLM & Orchestration
+openai
+langchain==0.3.22
+langchain-core==0.3.75
+langchain-community==0.3.20
+langchain-openai
+langgraph
+
+# Memory / Checkpointing
+redis
+langgraph-checkpoint-redis
+
+# The Official Google Agent-to-Agent Protocol SDK
+a2a-sdk[http-server]
+uvicorn
+
+# Tools & Protocols
+mcp
+pydantic
+
+# Observability & Environment
+langfuse==2.33.0
+gradio
+python-dotenv

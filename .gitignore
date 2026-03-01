@@ -1,0 +1,17 @@
+# Environments
+.env
+.venv
+env/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Databases & Generated Reports
+data/*.db
+data/*.sqlite
+reports/*.md
+reports/*.txt
+!reports/.gitkeep

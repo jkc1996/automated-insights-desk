@@ -23,3 +23,5 @@ langfuse
 gradio
 python-dotenv
 httpx
+
+guardrails-ai

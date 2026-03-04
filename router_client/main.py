@@ -17,6 +17,7 @@ from langgraph.checkpoint.redis import AsyncRedisSaver
 
 from langfuse.langchain import CallbackHandler
 from observability.tracing import trace_node
+from guardrails.intent_guardrail import check_user_intent
 
 load_dotenv()
 
@@ -351,6 +352,16 @@ class RouterOrchestrator:
 async def process_chat(user_input: str, thread_id: str):
 
     orchestrator = RouterOrchestrator()
+
+    # -------- GUARDRAIL CHECK --------
+    allowed, guardrail_message = await check_user_intent(
+        orchestrator.llm,
+        user_input
+    )
+
+    if not allowed:
+        return guardrail_message
+    # ---------------------------------
 
     await orchestrator.discover_agents()
 

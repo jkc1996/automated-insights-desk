@@ -94,12 +94,36 @@ class AnalystGraphBuilder:
             except Exception as e:
                 text = f"Tool execution failed: {str(e)}"
 
-            outputs.append(
-                ToolMessage(
-                    content=text,
-                    tool_call_id=call["id"]
+            # -----------------------------
+            # DEBUG SQL (ONLY FOR read_query)
+            # -----------------------------
+            if call["name"] == "read_query":
+
+                sql_query = call["args"].get("query", "")
+
+                debug_text = f"""
+                    SQL Executed:
+                    {sql_query}
+
+                    Result:
+                    {text}
+                    """
+
+                outputs.append(
+                    ToolMessage(
+                        content=debug_text,
+                        tool_call_id=call["id"]
+                    )
                 )
-            )
+
+            else:
+
+                outputs.append(
+                    ToolMessage(
+                        content=text,
+                        tool_call_id=call["id"]
+                    )
+                )
 
         return {"messages": outputs}
 

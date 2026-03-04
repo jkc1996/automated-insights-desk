@@ -88,7 +88,7 @@ class RouterOrchestrator:
         → Executes SQL queries and performs data analysis.
 
         publish_report
-        → Saves the final analysis as a markdown report.
+        → Saves reports or creates files in the filesystem.
 
         --------------------------------------------------
         CONVERSATION STRUCTURE
@@ -112,27 +112,39 @@ class RouterOrchestrator:
 
         Publisher Status
 
-        → The report has already been saved.
+        → The file/report has already been saved.
         → The workflow is complete.
 
         Return:
         finish
 
 
-        2. If the conversation contains:
+        2. If the latest user request is about creating, saving, or writing a file
+        (for example: "create a markdown file", "save a report", "write a file", 
+        "create a file in the reports folder")
+
+        AND there is NO Publisher Status yet
+
+        → The task should be handled by the Publisher agent.
+
+        Return:
+        publish_report
+
+
+        3. If the conversation contains:
 
         Analyst Output
 
         AND there is NO Publisher Status yet
 
         → The analyst has completed the analysis.
-        → The report still needs to be saved.
+        → The result should now be saved by the Publisher.
 
         Return:
         publish_report
 
 
-        3. If the conversation does NOT contain:
+        4. If the conversation does NOT contain:
 
         Analyst Output
 
@@ -141,18 +153,23 @@ class RouterOrchestrator:
         Return:
         analyze_database
 
+
         --------------------------------------------------
         CRITICAL RULES
         --------------------------------------------------
 
         • The analyst must never be called more than once for the same request.
-        • The publisher must only run AFTER the analyst.
-        • The workflow always follows this order:
+        • The publisher should only run once per request.
+        • Only one agent acts at a time.
+        • Once a Publisher Status message exists, the workflow must end.
 
+        Typical workflow:
+
+        Analytics request:
         User → Analyst → Publisher → Finish
 
-        • Never repeat a step that has already happened.
-        • Only one agent acts at a time.
+        File creation request:
+        User → Publisher → Finish
 
         --------------------------------------------------
         OUTPUT FORMAT (STRICT)

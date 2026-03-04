@@ -1,19 +1,24 @@
 {
   "mcpServers": {
     "sqlite_server": {
-      "command": "npx",
+      "command": ".venv/Scripts/mcp-server-sqlite.exe",
       "args": [
-        "-y",
-        "@modelcontextprotocol/server-sqlite",
-        "../data/dummy_data.db"
+        "--db-path",
+        "E:/automated-insights-desk/data/dummy_data.db"
       ]
     },
     "filesystem_server": {
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "../reports"
+        "node_modules/@modelcontextprotocol/server-filesystem/dist/index.js",
+        "E:/automated-insights-desk/reports"
+      ]
+    },
+    "custom_analytics": {
+      "command": "python",
+      "args": [
+        "-m",
+        "custom_mcp.server"
       ]
     }
   }

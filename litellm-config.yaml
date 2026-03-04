@@ -22,7 +22,8 @@ model_list:
       
 litellm_settings:
   drop_params: True
-  success_callback: ["langfuse"]
+  # success_callback: ["langfuse"]
+  turn_off_message_logging: True
   ssl_verify: false
 
 general_settings: 

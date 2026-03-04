@@ -11,7 +11,7 @@ redis
 langgraph-checkpoint-redis
 
 # The Official Google Agent-to-Agent Protocol SDK
-a2a-sdk[http-server]
+a2a-sdk[http-server]==0.2.4
 uvicorn
 
 # Tools & Protocols
@@ -19,6 +19,7 @@ mcp
 pydantic
 
 # Observability & Environment
-langfuse==2.33.0
+langfuse
 gradio
 python-dotenv
+httpx

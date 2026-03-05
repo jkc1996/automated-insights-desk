@@ -13,11 +13,8 @@ from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.session import ClientSession
 
 from observability.tracing import trace_node
-from langfuse.langchain import CallbackHandler
 
 load_dotenv()
-
-langfuse_handler = CallbackHandler()
 
 
 class AnalystState(TypedDict):
@@ -35,79 +32,93 @@ class AnalystGraphBuilder:
             temperature=0
         )
 
-    # ---------------------------------------------------
-    # LLM NODE
-    # ---------------------------------------------------
+    # ---------------- LLM NODE ----------------
+
     @trace_node("analyst_reasoning")
-    async def call_model(self, state: AnalystState, config):
+    async def call_model(self, state: AnalystState, config, span=None):
 
         system_prompt = config["configurable"]["system_prompt"]
         tools = config["configurable"]["formatted_tools"]
+
+        user_query = state["messages"][-1].content
+
+        span.update(
+            input=user_query,
+            metadata={
+                "node": "analyst_reasoning",
+                "tools_available": len(tools)
+            }
+        )
 
         llm_with_tools = self.llm.bind_tools(tools)
 
         messages = [{"role": "system", "content": system_prompt}] + state["messages"]
 
-        response = await llm_with_tools.ainvoke(
-            messages,
-            config={"callbacks": [langfuse_handler]}
+        response = await llm_with_tools.ainvoke(messages)
+
+        span.update(
+            metadata={
+                "tool_calls_detected": bool(getattr(response, "tool_calls", None))
+            }
         )
 
         return {"messages": [response]}
 
-    # ---------------------------------------------------
-    # TOOL EXECUTION
-    # ---------------------------------------------------
+    # ---------------- TOOL EXECUTION ----------------
+
     @trace_node("analyst_tool_execution")
-    async def execute_tools(self, state: AnalystState, config):
+    async def execute_tools(self, state: AnalystState, config, span=None):
 
         last_msg = state["messages"][-1]
-
         tool_map = config["configurable"]["tool_map"]
 
         outputs = []
 
         tool_calls = getattr(last_msg, "tool_calls", None) or []
 
-        if not tool_calls:
-            return {"messages": []}
+        span.update(metadata={"tool_calls": len(tool_calls)})
 
         for call in tool_calls:
 
+            tool_name = call["name"]
+
+            span.update(metadata={"tool": tool_name})
+
             try:
 
-                session: ClientSession = tool_map.get(call["name"])
-
-                if not session:
-                    raise ValueError(f"Tool '{call['name']}' not registered")
+                session: ClientSession = tool_map.get(tool_name)
 
                 result = await session.call_tool(
-                    name=call["name"],
+                    name=tool_name,
                     arguments=call["args"]
                 )
 
                 if result.content:
                     text = result.content[0].text
                 else:
-                    text = "Tool executed successfully but returned no output."
+                    text = "Tool returned no output."
 
             except Exception as e:
-                text = f"Tool execution failed: {str(e)}"
+                text = f"Tool error: {str(e)}"
 
-            # -----------------------------
-            # DEBUG SQL (ONLY FOR read_query)
-            # -----------------------------
-            if call["name"] == "read_query":
+            if tool_name == "read_query":
 
                 sql_query = call["args"].get("query", "")
 
-                debug_text = f"""
-                    SQL Executed:
-                    {sql_query}
+                span.update(
+                    metadata={
+                        "sql_query": sql_query,
+                        "sql_result_preview": text[:200]
+                    }
+                )
 
-                    Result:
-                    {text}
-                    """
+                debug_text = f"""
+SQL Executed:
+{sql_query}
+
+Result:
+{text}
+"""
 
                 outputs.append(
                     ToolMessage(
@@ -118,6 +129,8 @@ class AnalystGraphBuilder:
 
             else:
 
+                span.update(metadata={"tool_result_preview": text[:200]})
+
                 outputs.append(
                     ToolMessage(
                         content=text,
@@ -127,23 +140,19 @@ class AnalystGraphBuilder:
 
         return {"messages": outputs}
 
-    # ---------------------------------------------------
-    # ROUTING
-    # ---------------------------------------------------
+    # ---------------- ROUTING ----------------
+
     def should_continue(self, state: AnalystState):
 
         last_msg = state["messages"][-1]
 
-        tool_calls = getattr(last_msg, "tool_calls", None)
-
-        if tool_calls:
+        if getattr(last_msg, "tool_calls", None):
             return "execute_tools"
 
         return END
 
-    # ---------------------------------------------------
-    # GRAPH
-    # ---------------------------------------------------
+    # ---------------- GRAPH ----------------
+
     def build(self):
 
         workflow = StateGraph(AnalystState)
@@ -163,9 +172,9 @@ class AnalystGraphBuilder:
         return workflow.compile()
 
 
-# ---------------------------------------------------
-# ORCHESTRATOR
-# ---------------------------------------------------
+# ---------------- ORCHESTRATOR ----------------
+
+
 async def run_analyst(user_input: str, focus_metric: str):
 
     with open("mcp_servers.json", "r") as f:
@@ -190,7 +199,6 @@ async def run_analyst(user_input: str, focus_metric: str):
             await custom_session.initialize()
             await sqlite_session.initialize()
 
-            # Fetch MCP prompt
             prompt_data = await custom_session.get_prompt(
                 name="forensic_analysis_prompt",
                 arguments={"focus_metric": focus_metric}
@@ -241,8 +249,6 @@ async def run_analyst(user_input: str, focus_metric: str):
                 }
             }
 
-            inputs = {
-                "messages": [("user", user_input)]
-            }
+            inputs = {"messages": [("user", user_input)]}
 
             return await graph.ainvoke(inputs, config=config)

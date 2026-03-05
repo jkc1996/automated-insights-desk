@@ -1,43 +1,43 @@
 from functools import wraps
-from typing import Any, Callable, Coroutine
-from dotenv import load_dotenv
-from langfuse import Langfuse
-
-load_dotenv()
-
-langfuse = Langfuse()
+from observability.langfuse_client import langfuse
 
 
-def trace_node(name: str):
+def trace_node(name: str, as_type: str = "span"):
     """
-    Decorator for tracing LangGraph nodes with Langfuse.
+    Langfuse tracing decorator compatible with Langfuse v3.x
     """
 
-    def decorator(func: Callable[..., Coroutine[Any, Any, Any]]):
+    def decorator(func):
 
         @wraps(func)
         async def wrapper(*args, **kwargs):
 
-            span = langfuse.start_span(name=name)
+            with langfuse.start_as_current_observation(
+                name=name,
+                as_type=as_type
+            ) as span:
 
-            try:
-                result = await func(*args, **kwargs)
+                kwargs["span"] = span
 
-                span.update(
-                    output=str(result)
-                )
+                try:
+                    result = await func(*args, **kwargs)
 
-                return result
+                    span.update(
+                        metadata={"status": "completed"}
+                    )
 
-            except Exception as e:
-                span.update(
-                    level="ERROR",
-                    status_message=str(e)
-                )
-                raise
+                    return result
 
-            finally:
-                span.end()
+                except Exception as e:
+
+                    span.update(
+                        metadata={
+                            "status": "error",
+                            "error": str(e)
+                        }
+                    )
+
+                    raise
 
         return wrapper
 

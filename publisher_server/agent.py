@@ -2,6 +2,8 @@ import os
 import json
 from typing import Annotated, TypedDict
 
+from dotenv import load_dotenv
+
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, ToolMessage
 from langgraph.graph import StateGraph, START, END
@@ -10,14 +12,9 @@ from langgraph.graph.message import add_messages
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.session import ClientSession
 
-from dotenv import load_dotenv
-
 from observability.tracing import trace_node
-from langfuse.langchain import CallbackHandler
 
 load_dotenv()
-
-langfuse_handler = CallbackHandler()
 
 
 class PublisherState(TypedDict):
@@ -25,7 +22,9 @@ class PublisherState(TypedDict):
 
 
 class PublisherGraphBuilder:
+
     def __init__(self):
+
         self.llm = ChatOpenAI(
             model=os.getenv("DEFAULT_MODEL", "gpt-4o"),
             base_url=os.getenv("PROXY_BASE_URL"),
@@ -33,32 +32,37 @@ class PublisherGraphBuilder:
         )
 
     @trace_node("publisher_reasoning")
-    async def call_publisher_model(self, state: PublisherState, config):
-        """Node 1: Reasoning and File Content Generation."""
+    async def call_publisher_model(self, state: PublisherState, config, span=None):
 
         system_prompt = (
             "You are the Forensic Publisher Agent.\n"
-            "Your ONLY task is to take the provided content and save it to the local filesystem.\n"
-            "Use the 'write_file' tool. Once the file is written, summarize what you did and stop.\n"
-            "Do not attempt to read or modify the file after writing."
+            "Save the provided report using the write_file tool."
         )
 
         tools = config["configurable"]["formatted_tools"]
+
+        content = state["messages"][-1].content
+
+        span.update(
+            input=content,
+            metadata={
+                "node": "publisher_reasoning",
+                "tools_available": len(tools)
+            }
+        )
 
         llm_with_tools = self.llm.bind_tools(tools)
 
         messages = [{"role": "system", "content": system_prompt}] + state["messages"]
 
-        response = await llm_with_tools.ainvoke(
-            messages,
-            config={"callbacks": [langfuse_handler]}
-        )
+        response = await llm_with_tools.ainvoke(messages)
+
+        span.update(metadata={"tool_call": True})
 
         return {"messages": [response]}
 
     @trace_node("publisher_tool_execution")
-    async def execute_filesystem_tools(self, state: PublisherState, config):
-        """Node 2: Executing the raw MCP Filesystem tools."""
+    async def execute_filesystem_tools(self, state: PublisherState, config, span=None):
 
         last_msg = state["messages"][-1]
 
@@ -70,25 +74,30 @@ class PublisherGraphBuilder:
 
         for call in tool_calls:
 
+            tool_name = call["name"]
+
             try:
 
                 result = await session.call_tool(
-                    name=call["name"],
+                    name=tool_name,
                     arguments=call["args"]
                 )
 
-                readable_result = (
-                    result.content[0].text
-                    if result.content
-                    else "File operation successful."
-                )
+                text = result.content[0].text if result.content else "File saved."
 
             except Exception as e:
-                readable_result = f"Filesystem Error: {str(e)}"
+                text = f"Filesystem error: {str(e)}"
+
+            span.update(
+                metadata={
+                    "tool": tool_name,
+                    "result_preview": text[:200]
+                }
+            )
 
             outputs.append(
                 ToolMessage(
-                    content=readable_result,
+                    content=text,
                     tool_call_id=call["id"]
                 )
             )
@@ -139,7 +148,7 @@ async def run_publisher(report_content: str, filename: str):
 
             await session.initialize()
 
-            mcp_tools = await session.list_tools()
+            tools = await session.list_tools()
 
             formatted_tools = [{
                 "type": "function",
@@ -148,10 +157,9 @@ async def run_publisher(report_content: str, filename: str):
                     "description": t.description or "",
                     "parameters": t.inputSchema
                 }
-            } for t in mcp_tools.tools]
+            } for t in tools.tools]
 
             builder = PublisherGraphBuilder()
-
             graph = builder.build()
 
             config = {

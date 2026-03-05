@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from typing import Annotated, TypedDict
 
 from dotenv import load_dotenv
@@ -13,6 +14,7 @@ from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.session import ClientSession
 
 from observability.tracing import trace_node
+from observability.langfuse_client import langfuse
 
 load_dotenv()
 
@@ -34,10 +36,7 @@ class PublisherGraphBuilder:
     @trace_node("publisher_reasoning")
     async def call_publisher_model(self, state: PublisherState, config, span=None):
 
-        system_prompt = (
-            "You are the Forensic Publisher Agent.\n"
-            "Save the provided report using the write_file tool."
-        )
+        system_prompt = "Save the provided report using write_file."
 
         tools = config["configurable"]["formatted_tools"]
 
@@ -45,19 +44,25 @@ class PublisherGraphBuilder:
 
         span.update(
             input=content,
-            metadata={
-                "node": "publisher_reasoning",
-                "tools_available": len(tools)
-            }
+            metadata={"tools_available": len(tools)}
         )
 
         llm_with_tools = self.llm.bind_tools(tools)
 
         messages = [{"role": "system", "content": system_prompt}] + state["messages"]
 
-        response = await llm_with_tools.ainvoke(messages)
+        with langfuse.start_as_current_observation(
+            name="publisher_llm_call",
+            as_type="generation",
+            model=os.getenv("DEFAULT_MODEL", "gpt-4o")
+        ) as gen:
 
-        span.update(metadata={"tool_call": True})
+            response = await llm_with_tools.ainvoke(messages)
+
+            gen.update(
+                input=str(messages),
+                output=str(response.content)
+            )
 
         return {"messages": [response]}
 
@@ -76,6 +81,8 @@ class PublisherGraphBuilder:
 
             tool_name = call["name"]
 
+            start = time.time()
+
             try:
 
                 result = await session.call_tool(
@@ -86,11 +93,15 @@ class PublisherGraphBuilder:
                 text = result.content[0].text if result.content else "File saved."
 
             except Exception as e:
+
                 text = f"Filesystem error: {str(e)}"
+
+            latency = (time.time() - start) * 1000
 
             span.update(
                 metadata={
                     "tool": tool_name,
+                    "tool_latency_ms": round(latency, 2),
                     "result_preview": text[:200]
                 }
             )

@@ -31,9 +31,7 @@ class PublisherClient:
             }
         )
 
-        timeout = httpx.Timeout(60.0)
-
-        async with httpx.AsyncClient(timeout=timeout) as httpx_client:
+        async with httpx.AsyncClient(timeout=60.0) as httpx_client:
 
             client = A2AClient(httpx_client=httpx_client, url=agent_url)
 
@@ -53,31 +51,10 @@ class PublisherClient:
 
             response = await client.send_message(request)
 
-        # -------- FIXED RESPONSE PARSING --------
+        task = response.root.result
+        result_text = task.status.message.parts[0].root.text
 
-        resp_data = response.root
-
-        if hasattr(resp_data, "error") and resp_data.error:
-            result_text = f"Publisher Error: {resp_data.error}"
-
-        else:
-            task = resp_data.result
-
-            if task and task.status and task.status.message:
-
-                parts = task.status.message.parts
-
-                if parts and hasattr(parts[0], "root"):
-                    result_text = parts[0].root.text
-                elif parts and hasattr(parts[0], "text"):
-                    result_text = parts[0].text
-                else:
-                    result_text = str(parts)
-
-            else:
-                result_text = "No result returned from publisher."
-
-        span.update(output=result_text[:200])
+        span.update(output=result_text)
 
         return {
             "messages": [

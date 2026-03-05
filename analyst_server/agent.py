@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from typing import Annotated, TypedDict
 
 from dotenv import load_dotenv
@@ -13,6 +14,7 @@ from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.session import ClientSession
 
 from observability.tracing import trace_node
+from observability.langfuse_client import langfuse
 
 load_dotenv()
 
@@ -44,17 +46,26 @@ class AnalystGraphBuilder:
 
         span.update(
             input=user_query,
-            metadata={
-                "node": "analyst_reasoning",
-                "tools_available": len(tools)
-            }
+            metadata={"tools_available": len(tools)}
         )
 
         llm_with_tools = self.llm.bind_tools(tools)
 
         messages = [{"role": "system", "content": system_prompt}] + state["messages"]
 
-        response = await llm_with_tools.ainvoke(messages)
+        # LLM generation span
+        with langfuse.start_as_current_observation(
+            name="analyst_llm_call",
+            as_type="generation",
+            model=os.getenv("DEFAULT_MODEL", "gpt-4.1")
+        ) as gen:
+
+            response = await llm_with_tools.ainvoke(messages)
+
+            gen.update(
+                input=str(messages),
+                output=str(response.content)
+            )
 
         span.update(
             metadata={
@@ -82,7 +93,7 @@ class AnalystGraphBuilder:
 
             tool_name = call["name"]
 
-            span.update(metadata={"tool": tool_name})
+            tool_start = time.time()
 
             try:
 
@@ -93,14 +104,15 @@ class AnalystGraphBuilder:
                     arguments=call["args"]
                 )
 
-                if result.content:
-                    text = result.content[0].text
-                else:
-                    text = "Tool returned no output."
+                text = result.content[0].text if result.content else "Tool returned no output."
 
             except Exception as e:
+
                 text = f"Tool error: {str(e)}"
 
+            latency = (time.time() - tool_start) * 1000
+
+            # SQL observability
             if tool_name == "read_query":
 
                 sql_query = call["args"].get("query", "")
@@ -108,7 +120,8 @@ class AnalystGraphBuilder:
                 span.update(
                     metadata={
                         "sql_query": sql_query,
-                        "sql_result_preview": text[:200]
+                        "sql_result_preview": text[:200],
+                        "tool_latency_ms": round(latency, 2)
                     }
                 )
 
@@ -129,7 +142,13 @@ Result:
 
             else:
 
-                span.update(metadata={"tool_result_preview": text[:200]})
+                span.update(
+                    metadata={
+                        "tool": tool_name,
+                        "tool_latency_ms": round(latency, 2),
+                        "tool_result_preview": text[:200]
+                    }
+                )
 
                 outputs.append(
                     ToolMessage(
@@ -172,9 +191,6 @@ Result:
         return workflow.compile()
 
 
-# ---------------- ORCHESTRATOR ----------------
-
-
 async def run_analyst(user_input: str, focus_metric: str):
 
     with open("mcp_servers.json", "r") as f:
@@ -213,9 +229,7 @@ async def run_analyst(user_input: str, focus_metric: str):
             tool_map = {}
 
             for t in sqlite_tools.tools:
-
                 tool_map[t.name] = sqlite_session
-
                 formatted_tools.append({
                     "type": "function",
                     "function": {
@@ -226,9 +240,7 @@ async def run_analyst(user_input: str, focus_metric: str):
                 })
 
             for t in custom_tools.tools:
-
                 tool_map[t.name] = custom_session
-
                 formatted_tools.append({
                     "type": "function",
                     "function": {

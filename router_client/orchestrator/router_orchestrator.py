@@ -3,6 +3,7 @@ import os
 from langchain_openai import ChatOpenAI
 
 from observability.tracing import trace_node
+from observability.langfuse_client import langfuse
 
 from router_client.prompts.router_prompt import ROUTER_SUPERVISOR_PROMPT
 from router_client.orchestrator.agent_discovery import AgentDiscovery
@@ -37,17 +38,22 @@ class RouterOrchestrator:
 
         user_message = state["messages"][-1].content
 
-        span.update(
-            input=user_message,
-            metadata={
-                "agent": "router",
-                "step": "routing_decision"
-            }
-        )
+        span.update(input=user_message)
 
         messages = [{"role": "system", "content": ROUTER_SUPERVISOR_PROMPT}] + state["messages"]
 
-        response = await self.llm.ainvoke(messages, config=config)
+        with langfuse.start_as_current_observation(
+            name="router_llm_call",
+            as_type="generation",
+            model=os.getenv("DEFAULT_MODEL", "gpt-4o")
+        ) as gen:
+
+            response = await self.llm.ainvoke(messages, config=config)
+
+            gen.update(
+                input=str(messages),
+                output=response.content
+            )
 
         decision = response.content.lower().strip()
 
@@ -58,36 +64,14 @@ class RouterOrchestrator:
         else:
             next_step = "finish"
 
-        span.update(
-            output=decision,
-            metadata={"decision": next_step}
-        )
+        span.update(metadata={"decision": next_step})
 
         return {"next_step": next_step}
 
     @trace_node("router_call_analyst")
     async def call_analyst(self, state, span=None):
-
-        user_query = next(
-            m.content for m in reversed(state["messages"])
-            if getattr(m, "type", None) == "human"
-        )
-
-        span.update(
-            input=user_query,
-            metadata={"agent": "analyst"}
-        )
-
         return await self.analyst.call(state, self.agent_registry)
 
     @trace_node("router_call_publisher")
     async def call_publisher(self, state, span=None):
-
-        report_content = state["messages"][-1].content
-
-        span.update(
-            input=report_content,
-            metadata={"agent": "publisher"}
-        )
-
         return await self.publisher.call(state, self.agent_registry)

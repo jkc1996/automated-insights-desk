@@ -237,6 +237,44 @@ look for an intermediate table that connects them.
 Never join tables only because they share similar column names.
 
 --------------------------------------------------
+TEXT-TO-SQL ACCURACY RULES
+--------------------------------------------------
+
+To ensure accurate SQL generation, follow these strict rules.
+
+COLUMN GROUNDING RULE
+
+• Only use columns that exist in the inspected schema.
+• Never invent column names.
+• Verify which table owns each column before writing SQL.
+• If unsure where a column belongs, inspect the schema first.
+
+JOIN PRECISION RULE
+
+• Every JOIN must be based on a verified relationship.
+• Use identifier columns when joining tables.
+• Avoid joining tables on descriptive or categorical columns.
+• Confirm the join keys using schema inspection before writing SQL.
+
+AGGREGATION CONSISTENCY RULE
+
+When using aggregation functions such as:
+
+SUM  
+COUNT  
+AVG  
+MAX  
+MIN  
+
+Ensure that:
+
+• non-aggregated columns appear in GROUP BY
+• HAVING is used only for aggregated conditions
+• WHERE is used only for row filtering before aggregation
+
+Incorrect grouping can produce incorrect analytical results.
+
+--------------------------------------------------
 MULTI-STEP ANALYSIS RULE
 --------------------------------------------------
 
@@ -400,6 +438,58 @@ SELECT DISTINCT column_name
 FROM table_name
 
 This helps avoid filtering using incorrect values.
+
+-------------------------------------------------------
+ADVANCED CORRECTNESS RULES
+-------------------------------------------------------
+GRAIN & THRESHOLD RULE
+• When the question filters entities by aggregated behavior (e.g., “entities with > X activity over last N periods”):
+  1) Pre-aggregate at the entity grain inside a subquery.
+  2) Apply the threshold with HAVING at that same grain.
+  3) Join the filtered entity set to other tables only after this step.
+• Do not apply entity thresholds at broader grains (e.g., region) unless explicitly requested.
+
+FACT-TO-FACT JOIN SAFEGUARD
+• Do not join two fact-like tables at their raw grains.
+• Pre-aggregate at the required grain on one side (e.g., per entity and/or period) before joining, to avoid row multiplication and overcounting.
+
+TIME WINDOW ALIGNMENT RULE
+• If the question mentions a period (e.g., “last N periods”), derive that period set once from an authoritative period key and reuse it to filter every fact involved.
+• Ensure ALL facts are filtered to the SAME period set, not just one of them.
+• If different tables use incompatible period key formats, first ensure a valid mapping path exists in the schema. If none exists, state the limitation rather than forcing an implicit mapping.
+
+DYNAMIC RECENT-PERIOD RULE
+• Derive the “last N” periods dynamically (e.g., ORDER BY period_key DESC LIMIT N). Do not enumerate literal period values.
+
+OUTPUT GRAIN CONFORMANCE RULE
+• The final SELECT must only include:
+  - the grouping columns for the requested output entity, and
+  - aggregated measures.
+• Do not select non-aggregated columns that are not in GROUP BY.
+
+KEY COMPATIBILITY RULE
+• Before any join or filter, verify the data types and semantics of keys (entity keys, period keys). Use only validated, compatible keys for joins and filters.
+
+NULLS & TIES POLICY
+• Decide how to handle null/unknown dimensions (exclude or label as 'Unknown') and apply consistently.
+• If multiple entities tie for the top metric, either return all ties or break ties deterministically (e.g., by name ascending) and state the rule.
+
+ENCODING GUARD
+• Ensure SQL operators are not HTML-escaped in executable queries (use '>' not '&gt;', '<' not '&lt;').
+
+PRE-QUERY MINI PLAN (MANDATORY)
+• Briefly state (before writing SQL):
+  1) Output grain (what you will group by).
+  2) Filter grain & threshold (which entity and what condition).
+  3) Single authoritative source for the period window and how you will derive last N.
+  4) Join keys between tables (entity keys, period keys).
+  5) Double-count avoidance strategy (which side is pre-aggregated).
+
+POST-EXECUTION VALIDATION
+• After executing, run at least one quick validation:
+  - Reconfirm that all included entities meet the threshold.
+  - Verify that all fact rows are within the intended period set.
+  - Sanity-check that grouping columns match the asked output entity.
 
 --------------------------------------------------
 CALCULATION RULES
